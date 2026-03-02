@@ -3,64 +3,152 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>百人一首クイズ（説明→句）</title>
+  <title>百人一首（一覧 / クイズ）</title>
   <style>
     body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif; line-height: 1.6; margin: 24px; }
-    .card { max-width: 820px; margin: 0 auto; padding: 16px; border: 1px solid #ddd; border-radius: 10px; }
-    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-    input[type="text"] { flex: 1; min-width: 260px; padding: 10px; font-size: 16px; }
+    .card { max-width: 1100px; margin: 0 auto; padding: 16px; border: 1px solid #ddd; border-radius: 10px; }
+    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .topbar { display:flex; justify-content: space-between; gap:12px; flex-wrap: wrap; align-items: center; }
+    .tabs { display:flex; gap:8px; align-items:center; }
+    .tab { padding: 8px 12px; border:1px solid #ddd; border-radius: 999px; background:#fafafa; cursor:pointer; user-select:none; }
+    .tab.active { background:#fff; border-color:#999; }
+    .meta { color:#555; font-size: 13px; }
+    .muted { color:#666; font-size: 13px; }
+    hr { border:none; border-top:1px solid #eee; margin: 12px 0; }
+    input[type="text"], input[type="number"] { padding:10px; font-size:16px; }
     button { padding: 10px 14px; font-size: 14px; cursor: pointer; }
-    .meta { color: #555; font-size: 13px; }
+    code { background:#f6f6f6; padding:2px 6px; border-radius:6px; }
+    details { margin-top: 10px; }
+    .pill { display:inline-block; padding:2px 8px; border:1px solid #ddd; border-radius:999px; font-size:12px; color:#444; background:#fafafa; }
+
+    /* Quiz */
     .desc { font-size: 18px; padding: 10px 0; }
     .result { margin-top: 10px; padding: 10px; border-radius: 8px; }
     .ok { background: #eef9ee; border: 1px solid #bfe5bf; }
     .ng { background: #fff3f3; border: 1px solid #f0bcbc; }
-    .muted { color: #666; font-size: 13px; }
-    details { margin-top: 8px; }
-    code { background: #f6f6f6; padding: 2px 6px; border-radius: 6px; }
+
+    /* List */
+    table { width:100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { border-top: 1px solid #eee; padding: 10px; vertical-align: top; }
+    th { text-align:left; font-size: 13px; color:#555; background:#fafafa; position: sticky; top: 0; }
+    .nowrap { white-space: nowrap; }
+    .small { font-size: 13px; color:#555; }
+    .btnLink { padding: 6px 10px; font-size: 12px; border:1px solid #ddd; background:#fff; border-radius: 8px; cursor:pointer; }
   </style>
 </head>
 <body>
   <div class="card">
-    <h1 style="margin:0 0 8px;">百人一首クイズ</h1>
-    <div class="meta">
-      説明だけを表示します。句を入力してください（スペースは半角/全角/有無どれでもOK）。
+    <div class="topbar">
+      <h1 style="margin:0;">百人一首</h1>
+      <div class="tabs">
+        <div id="tabQuiz" class="tab active" role="button" tabindex="0">クイズ</div>
+        <div id="tabList" class="tab" role="button" tabindex="0">一覧</div>
+      </div>
     </div>
+    <div class="meta" id="statusLine" style="margin-top:6px;">読み込み中...</div>
 
     <hr />
 
-    <div class="row" style="justify-content: space-between;">
-      <div class="meta">
-        <span id="qInfo">読み込み中...</span>
+    <!-- ======================= QUIZ VIEW ======================= -->
+    <section id="viewQuiz" style="display:block;">
+      <details open>
+        <summary>出題範囲の設定（番号で絞り込み）</summary>
+        <div class="muted" style="margin-top:8px;">
+          <div class="row" style="align-items:flex-end;">
+            <div>
+              <div class="meta">番号範囲（例: 1〜20）</div>
+              <div class="row">
+                <input id="qRangeMin" type="number" min="1" max="100" value="1" style="width:110px;" />
+                <span>〜</span>
+                <input id="qRangeMax" type="number" min="1" max="100" value="100" style="width:110px;" />
+              </div>
+            </div>
+
+            <div style="min-width: 320px; flex: 1;">
+              <div class="meta">番号指定（範囲/列挙。例: 1-10, 15, 20-25）</div>
+              <input id="qSetText" type="text" placeholder="空なら『番号範囲』が使われます" style="width:100%;" />
+            </div>
+
+            <button id="btnApplyPool">この条件で出題</button>
+          </div>
+
+          <div class="meta" style="margin-top:8px;">
+            現在の出題プール：<span id="poolInfo" class="pill">-</span>
+          </div>
+        </div>
+      </details>
+
+      <details>
+        <summary>表示オプション</summary>
+        <div class="row" style="margin-top:10px;">
+          <label><input type="checkbox" id="optShowAuthor" /> 作者も表示</label>
+          <label><input type="checkbox" id="optShowNo" checked /> 番号も表示</label>
+        </div>
+      </details>
+
+      <hr />
+
+      <div class="row" style="justify-content: space-between;">
+        <div class="meta"><span id="qInfo">-</span></div>
+        <div class="meta">正解: <span id="scoreOk">0</span> / <span id="scoreAll">0</span></div>
       </div>
-      <div class="meta">
-        正解: <span id="scoreOk">0</span> / <span id="scoreAll">0</span>
+
+      <div class="desc" id="qDesc">-</div>
+
+      <div class="row">
+        <input id="answer" type="text" placeholder="ここに句を入力" autocomplete="off" style="flex:1; min-width:260px;" />
+        <button id="btnCheck">答える</button>
+        <button id="btnNext">次の問題</button>
       </div>
-    </div>
 
-    <div class="desc" id="qDesc">-</div>
+      <div class="muted" style="margin-top:6px;">
+        スペースは半角/全角/有無どれでもOK（空白は全て無視して判定）。
+      </div>
 
-    <div class="row">
-      <input id="answer" type="text" placeholder="ここに句を入力" autocomplete="off" />
-      <button id="btnCheck">答える</button>
-      <button id="btnNext">次の問題</button>
-    </div>
+      <div id="result" class="result" style="display:none;"></div>
+    </section>
 
-    <div class="muted" style="margin-top:6px;">
-      例: <code>わが</code> と <code>わ が</code>（全角/半角スペース含む）を同一扱いで判定します。
-    </div>
+    <!-- ======================= LIST VIEW ======================= -->
+    <section id="viewList" style="display:none;">
+      <div class="meta">
+        全100首を表示します。検索は「句 / 作者 / 説明 / 番号」にマッチします。<br>
+        一覧からクイズの出題範囲を設定して、そのままクイズに切り替えできます。
+      </div>
 
-    <div id="result" class="result" style="display:none;"></div>
-
-    <details>
-      <summary>表示オプション</summary>
       <div class="row" style="margin-top:10px;">
-        <label><input type="checkbox" id="optShowAuthor" /> 作者も表示</label>
-        <label><input type="checkbox" id="optShowNo" checked /> 番号も表示</label>
+        <input id="lQuery" type="text" placeholder="検索（例: 月 / 小野小町 / 露 / 23）" style="flex:1; min-width:260px;" />
+        <div class="row">
+          <div class="small">番号範囲</div>
+          <input id="lMinNo" type="number" min="1" max="100" placeholder="1" style="width:110px;" />
+          <span>〜</span>
+          <input id="lMaxNo" type="number" min="1" max="100" placeholder="100" style="width:110px;" />
+        </div>
+        <button id="btnListClear">クリア</button>
       </div>
-    </details>
 
-    <details style="margin-top:10px;">
+      <div class="row" style="margin-top:8px;">
+        <div class="meta">表示件数: <span id="lCount">-</span></div>
+        <button id="btnQuizFromRange" class="btnLink">この番号範囲でクイズ</button>
+        <button id="btnQuizFromShown" class="btnLink">表示中（検索結果）だけでクイズ</button>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th style="width:70px;">番号</th>
+            <th style="width:170px;">作者</th>
+            <th>句</th>
+            <th>説明</th>
+            <th style="width:180px;">クイズ</th>
+          </tr>
+        </thead>
+        <tbody id="lTbody">
+          <tr><td colspan="5" class="muted">読み込み中...</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <details style="margin-top:12px;">
       <summary>うまく動かないとき</summary>
       <div class="muted" style="margin-top:8px;">
         <p style="margin:0 0 8px;">
@@ -76,10 +164,25 @@
 (() => {
   /** @type {{番号:number, 句:string, 作者:string, 説明:string}[]} */
   let data = [];
+  /** @type {{番号:number, 句:string, 作者:string, 説明:string}[]} */
+  let pool = [];
   let current = null;
 
   let scoreOk = 0;
   let scoreAll = 0;
+
+  // Tabs / Views
+  const tabQuiz = document.getElementById('tabQuiz');
+  const tabList = document.getElementById('tabList');
+  const viewQuiz = document.getElementById('viewQuiz');
+  const viewList = document.getElementById('viewList');
+  const statusLine = document.getElementById('statusLine');
+
+  // Quiz elements
+  const qRangeMin = document.getElementById('qRangeMin');
+  const qRangeMax = document.getElementById('qRangeMax');
+  const qSetText  = document.getElementById('qSetText');
+  const btnApplyPool = document.getElementById('btnApplyPool');
 
   const elQInfo = document.getElementById('qInfo');
   const elQDesc = document.getElementById('qDesc');
@@ -87,18 +190,90 @@
   const elResult = document.getElementById('result');
   const elScoreOk = document.getElementById('scoreOk');
   const elScoreAll = document.getElementById('scoreAll');
-
   const optShowAuthor = document.getElementById('optShowAuthor');
   const optShowNo = document.getElementById('optShowNo');
+  const poolInfo = document.getElementById('poolInfo');
+
+  // List elements
+  const lQuery = document.getElementById('lQuery');
+  const lMinNo = document.getElementById('lMinNo');
+  const lMaxNo = document.getElementById('lMaxNo');
+  const btnListClear = document.getElementById('btnListClear');
+  const lCount = document.getElementById('lCount');
+  const lTbody = document.getElementById('lTbody');
+  const btnQuizFromRange = document.getElementById('btnQuizFromRange');
+  const btnQuizFromShown = document.getElementById('btnQuizFromShown');
+
+  // ---------- Utilities ----------
+  function escapeHtml(s) {
+    return String(s ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
+  }
+
+  function clampNo(n) {
+    n = Number(n);
+    if (!Number.isFinite(n)) return null;
+    n = Math.floor(n);
+    if (n < 1 || n > 100) return null;
+    return n;
+  }
 
   function normalizeForCompare(str) {
-    // NFKC: 全角英数/記号などのゆれを寄せる（句がひらがな中心でも害が少ない）
-    // スペース: 半角/全角/改行/タブ等をすべて無視
+    // 全角/半角のゆれを寄せる + 空白（半角/全角/改行等）を全て無視
     return (str ?? "")
       .normalize('NFKC')
       .replace(/[\s\u3000]+/g, ""); // \u3000 = 全角スペース
   }
 
+  // "1-10, 15, 20-25" -> Set<number>
+  function parseSetExpression(expr) {
+    const s = new Set();
+    const raw = (expr ?? "").trim();
+    if (!raw) return s;
+
+    const parts = raw.split(/[,\u3001]/).map(x => x.trim()).filter(Boolean); // , or 、区切り
+    for (const p of parts) {
+      const m = p.match(/^(\d+)\s*-\s*(\d+)$/);
+      if (m) {
+        const a = clampNo(m[1]);
+        const b = clampNo(m[2]);
+        if (a == null || b == null) throw new Error(`番号指定が不正です: ${p}`);
+        const lo = Math.min(a, b);
+        const hi = Math.max(a, b);
+        for (let i = lo; i <= hi; i++) s.add(i);
+      } else {
+        const n = clampNo(p);
+        if (n == null) throw new Error(`番号指定が不正です: ${p}`);
+        s.add(n);
+      }
+    }
+    return s;
+  }
+
+  // ---------- View switching ----------
+  function setMode(mode) {
+    const isQuiz = (mode !== 'list');
+    viewQuiz.style.display = isQuiz ? 'block' : 'none';
+    viewList.style.display = isQuiz ? 'none' : 'block';
+    tabQuiz.classList.toggle('active', isQuiz);
+    tabList.classList.toggle('active', !isQuiz);
+
+    // hashを更新（ブックマーク用）
+    const h = isQuiz ? '#quiz' : '#list';
+    if (location.hash !== h) history.replaceState(null, '', location.pathname + location.search + h);
+
+    if (!isQuiz) renderList();
+  }
+
+  function getModeFromHash() {
+    return (location.hash || '').toLowerCase() === '#list' ? 'list' : 'quiz';
+  }
+
+  // ---------- Quiz ----------
   function setResult(kind, html) {
     elResult.style.display = 'block';
     elResult.className = 'result ' + (kind === 'ok' ? 'ok' : 'ng');
@@ -123,15 +298,39 @@
     elQInfo.textContent = parts.length ? parts.join(' / ') : '（表示情報なし）';
   }
 
-  function nextQuestion() {
+  function buildPoolFromQuizInputs() {
     if (!data.length) return;
+
+    const expr = (qSetText.value ?? "").trim();
+    let allow = null;
+
+    if (expr) {
+      allow = parseSetExpression(expr);
+      if (allow.size === 0) throw new Error("番号指定が空です");
+    } else {
+      const a = clampNo(qRangeMin.value);
+      const b = clampNo(qRangeMax.value);
+      if (a == null || b == null) throw new Error("番号範囲が不正です（1〜100）");
+      const lo = Math.min(a, b);
+      const hi = Math.max(a, b);
+      allow = new Set();
+      for (let i = lo; i <= hi; i++) allow.add(i);
+    }
+
+    pool = data.filter(x => allow.has(Number(x.番号)));
+    if (pool.length === 0) throw new Error("出題プールが0件です（条件を見直してください）");
+
+    poolInfo.textContent = `${pool.length}首`;
+  }
+
+  function nextQuestion() {
+    if (!pool.length) return;
     clearResult();
     elAnswer.value = '';
 
-    current = data[Math.floor(Math.random() * data.length)];
+    current = pool[Math.floor(Math.random() * pool.length)];
     elQDesc.textContent = current.説明;
     renderQuestionInfo(current);
-
     elAnswer.focus();
   }
 
@@ -157,19 +356,103 @@
     updateScore();
   }
 
-  function escapeHtml(s) {
-    return String(s ?? "")
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#39;");
+  // ---------- List ----------
+  function listMatches(item, q) {
+    if (!q) return true;
+    const s = `${item.番号} ${item.作者} ${item.句} ${item.説明}`.toLowerCase();
+    return s.includes(q.toLowerCase());
   }
+
+  function listInRange(item, minNo, maxNo) {
+    const n = Number(item.番号);
+    if (minNo != null && n < minNo) return false;
+    if (maxNo != null && n > maxNo) return false;
+    return true;
+  }
+
+  function getListFilteredRows() {
+    const q = (lQuery.value ?? "").trim();
+    const minNo = lMinNo.value ? clampNo(lMinNo.value) : null;
+    const maxNo = lMaxNo.value ? clampNo(lMaxNo.value) : null;
+
+    return data
+      .filter(x => listMatches(x, q))
+      .filter(x => listInRange(x, minNo, maxNo))
+      .sort((a,b) => Number(a.番号) - Number(b.番号));
+  }
+
+  function renderList() {
+    if (!data.length) return;
+
+    const rows = getListFilteredRows();
+    lCount.textContent = String(rows.length);
+
+    if (rows.length === 0) {
+      lTbody.innerHTML = `<tr><td colspan="5" class="muted">該当なし</td></tr>`;
+      return;
+    }
+
+    lTbody.innerHTML = rows.map(item => {
+      const n = Number(item.番号);
+      return `
+        <tr>
+          <td class="nowrap">${escapeHtml(n)}</td>
+          <td>${escapeHtml(item.作者)}</td>
+          <td>${escapeHtml(item.句)}</td>
+          <td>${escapeHtml(item.説明)}</td>
+          <td class="small">
+            <button class="btnLink" data-quiz-one="${escapeHtml(n)}">この1首で出題</button>
+          </td>
+        </tr>
+      `;
+    }).join("");
+
+    // 行ボタン
+    lTbody.querySelectorAll('button[data-quiz-one]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const n = btn.getAttribute('data-quiz-one');
+        // クイズ側設定：番号指定を優先
+        qSetText.value = String(n);
+        qRangeMin.value = 1;
+        qRangeMax.value = 100;
+
+        try {
+          buildPoolFromQuizInputs();
+          setMode('quiz');
+          nextQuestion();
+        } catch (err) {
+          setMode('quiz');
+          setResult('ng', `設定エラー: ${escapeHtml(err.message)}`);
+        }
+      });
+    });
+  }
+
+  function setQuizPoolByRange(minNo, maxNo) {
+    qSetText.value = '';
+    qRangeMin.value = String(minNo);
+    qRangeMax.value = String(maxNo);
+    buildPoolFromQuizInputs();
+  }
+
+  function setQuizPoolByNumbers(nums) {
+    // nums: number[]
+    const sorted = Array.from(new Set(nums)).sort((a,b)=>a-b);
+    qSetText.value = sorted.join(', ');
+    qRangeMin.value = 1;
+    qRangeMax.value = 100;
+    buildPoolFromQuizInputs();
+  }
+
+  // ---------- Events ----------
+  tabQuiz.addEventListener('click', () => setMode('quiz'));
+  tabList.addEventListener('click', () => setMode('list'));
+  tabQuiz.addEventListener('keydown', (e) => { if (e.key === 'Enter') setMode('quiz'); });
+  tabList.addEventListener('keydown', (e) => { if (e.key === 'Enter') setMode('list'); });
 
   document.getElementById('btnNext').addEventListener('click', nextQuestion);
   document.getElementById('btnCheck').addEventListener('click', checkAnswer);
 
-  // Enterで回答（Shift+Enterは無効化しない）
   elAnswer.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -180,33 +463,110 @@
   optShowAuthor.addEventListener('change', () => { if (current) renderQuestionInfo(current); });
   optShowNo.addEventListener('change', () => { if (current) renderQuestionInfo(current); });
 
-  // data.json を読み込み
+  btnApplyPool.addEventListener('click', () => {
+    try {
+      buildPoolFromQuizInputs();
+      nextQuestion();
+    } catch (err) {
+      setResult('ng', `設定エラー: ${escapeHtml(err.message)}`);
+    }
+  });
+
+  btnListClear.addEventListener('click', () => {
+    lQuery.value = '';
+    lMinNo.value = '';
+    lMaxNo.value = '';
+    renderList();
+  });
+
+  [lQuery, lMinNo, lMaxNo].forEach(el => el.addEventListener('input', () => renderList()));
+
+  btnQuizFromRange.addEventListener('click', () => {
+    const a = lMinNo.value ? clampNo(lMinNo.value) : 1;
+    const b = lMaxNo.value ? clampNo(lMaxNo.value) : 100;
+    if (a == null || b == null) {
+      setMode('quiz');
+      setResult('ng', '一覧側の番号範囲が不正です（1〜100）');
+      return;
+    }
+    try {
+      setQuizPoolByRange(Math.min(a,b), Math.max(a,b));
+      setMode('quiz');
+      nextQuestion();
+    } catch (err) {
+      setMode('quiz');
+      setResult('ng', `設定エラー: ${escapeHtml(err.message)}`);
+    }
+  });
+
+  btnQuizFromShown.addEventListener('click', () => {
+    const rows = getListFilteredRows();
+    const nums = rows.map(x => Number(x.番号)).filter(n => Number.isFinite(n));
+    if (nums.length === 0) {
+      setMode('quiz');
+      setResult('ng', '表示中（検索結果）が0件なので出題できません');
+      return;
+    }
+    try {
+      setQuizPoolByNumbers(nums);
+      setMode('quiz');
+      nextQuestion();
+    } catch (err) {
+      setMode('quiz');
+      setResult('ng', `設定エラー: ${escapeHtml(err.message)}`);
+    }
+  });
+
+  // ---------- Boot ----------
+  function validateJsonShape(json) {
+    if (!Array.isArray(json) || json.length === 0) throw new Error('data.json が配列ではない/空です');
+    const sample = json[0];
+    if (!('句' in sample) || !('説明' in sample) || !('作者' in sample) || !('番号' in sample)) {
+      throw new Error('data.json のキーが想定と違います（番号/句/作者/説明 が必要）');
+    }
+    // 番号が1..100である前提（念のためソート）
+    return json.slice().sort((a,b) => Number(a.番号) - Number(b.番号));
+  }
+
   fetch('data.json', { cache: 'no-store' })
     .then(res => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     })
     .then(json => {
-      if (!Array.isArray(json) || json.length === 0) throw new Error('data.json が配列ではない/空です');
-      // 期待キーの最低限チェック
-      const sample = json[0];
-      if (!('句' in sample) || !('説明' in sample) || !('作者' in sample) || !('番号' in sample)) {
-        throw new Error('data.json のキーが想定と違います（番号/句/作者/説明 が必要）');
+      data = validateJsonShape(json);
+
+      statusLine.textContent = `data.json 読み込みOK（${data.length}首）`;
+
+      // 初期モード
+      setMode(getModeFromHash());
+
+      // 初期出題プール（1..100）
+      try {
+        buildPoolFromQuizInputs();
+        poolInfo.textContent = `${pool.length}首`;
+        if (getModeFromHash() === 'quiz') nextQuestion();
+        else renderList();
+      } catch (err) {
+        setMode('quiz');
+        setResult('ng', `設定エラー: ${escapeHtml(err.message)}`);
       }
-      data = json;
-      nextQuestion();
     })
     .catch(err => {
-      elQInfo.textContent = '読み込み失敗';
-      elQDesc.textContent = `data.json を読み込めませんでした: ${err.message}`;
+      statusLine.textContent = '読み込み失敗';
+      viewQuiz.style.display = 'block';
+      viewList.style.display = 'none';
       setResult('ng',
-        `data.json の読み込みに失敗しました。<br>
+        `data.json を読み込めませんでした: ${escapeHtml(err.message)}<br>
          <div class="muted" style="margin-top:6px;">
            ・index.html と data.json が同じフォルダにあるか<br>
-           ・<code>file://</code> 直開きの場合はローカルサーバで開いているか（下の「うまく動かないとき」参照）
+           ・<code>file://</code> 直開きの場合はローカルサーバで開いているか
          </div>`
       );
     });
+
+  // hash変更（#quiz / #list）に追従
+  window.addEventListener('hashchange', () => setMode(getModeFromHash()));
 })();
 </script>
 </body>
