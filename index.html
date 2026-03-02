@@ -74,6 +74,24 @@
 
           <div class="meta" style="margin-top:8px;">
             現在の出題プール：<span id="poolInfo" class="pill">-</span>
+            <span id="eligibleInfo" class="pill">-</span>
+          </div>
+        </div>
+      </details>
+
+      <details>
+        <summary>正解後クールダウン（正解した札を「しばらく出さない」）</summary>
+        <div class="muted" style="margin-top:8px;">
+          <div class="row" style="align-items:flex-end;">
+            <div>
+              <div class="meta">再出題まで（問数）</div>
+              <input id="cooldownQuestions" type="number" min="0" step="1" value="30" style="width:160px;" />
+            </div>
+            <button id="btnSaveSettings">保存</button>
+            <button id="btnResetProgress">履歴/成績をリセット</button>
+          </div>
+          <div class="meta" style="margin-top:8px;">
+            ルール：正解した札は「N問後」まで再出題しません。履歴はブラウザの localStorage に保存されます。
           </div>
         </div>
       </details>
@@ -96,13 +114,13 @@
       <div class="desc" id="qDesc">-</div>
 
       <div class="row">
-        <input id="answer" type="text" placeholder="ここに句を入力" autocomplete="off" style="flex:1; min-width:260px;" />
+        <input id="answer" type="text" placeholder="ここに句を入力（Shift+Enterで回答）" autocomplete="off" style="flex:1; min-width:260px;" />
         <button id="btnCheck">答える</button>
         <button id="btnNext">次の問題</button>
       </div>
 
       <div class="muted" style="margin-top:6px;">
-        スペースは半角/全角/有無どれでもOK（空白は全て無視して判定）。
+        判定：空白は半角/全角/改行含め全て無視。回答操作：<b>Shift+Enter</b> のみ。
       </div>
 
       <div id="result" class="result" style="display:none;"></div>
@@ -147,42 +165,54 @@
         </tbody>
       </table>
     </section>
-
-    <details style="margin-top:12px;">
-      <summary>うまく動かないとき</summary>
-      <div class="muted" style="margin-top:8px;">
-        <p style="margin:0 0 8px;">
-          ブラウザによっては <code>file://</code> 直開きだと <code>data.json</code> を読めません。
-          その場合はこのフォルダで次を実行して、<code>http://localhost:8000/</code> を開いてください。
-        </p>
-        <pre style="margin:0; background:#f6f6f6; padding:10px; border-radius:8px; overflow:auto;"><code>python -m http.server 8000</code></pre>
-      </div>
-    </details>
   </div>
 
 <script>
 (() => {
+  // ===== Storage Keys =====
+  const SETTINGS_KEY = 'hyakunin_settings_v2';
+  const PROGRESS_KEY = 'hyakunin_progress_v2';
+  const STATE_KEY    = 'hyakunin_state_v2';
+
+  // ===== Data =====
   /** @type {{番号:number, 句:string, 作者:string, 説明:string}[]} */
   let data = [];
   /** @type {{番号:number, 句:string, 作者:string, 説明:string}[]} */
   let pool = [];
   let current = null;
 
-  let scoreOk = 0;
-  let scoreAll = 0;
+  // ===== Persistent state =====
+  let attempts = 0; // total answers tried
+  let correct  = 0;
 
-  // Tabs / Views
+  /**
+   * progress[no] = {
+   *   correctCount: number,
+   *   nextEligibleAttempt: number
+   * }
+   */
+  let progress = {};
+
+  // settings
+  let settings = {
+    cooldownQuestions: 30
+  };
+
+  // ===== Tabs / Views =====
   const tabQuiz = document.getElementById('tabQuiz');
   const tabList = document.getElementById('tabList');
   const viewQuiz = document.getElementById('viewQuiz');
   const viewList = document.getElementById('viewList');
   const statusLine = document.getElementById('statusLine');
 
-  // Quiz elements
+  // ===== Quiz elements =====
   const qRangeMin = document.getElementById('qRangeMin');
   const qRangeMax = document.getElementById('qRangeMax');
   const qSetText  = document.getElementById('qSetText');
   const btnApplyPool = document.getElementById('btnApplyPool');
+
+  const poolInfo = document.getElementById('poolInfo');
+  const eligibleInfo = document.getElementById('eligibleInfo');
 
   const elQInfo = document.getElementById('qInfo');
   const elQDesc = document.getElementById('qDesc');
@@ -192,9 +222,13 @@
   const elScoreAll = document.getElementById('scoreAll');
   const optShowAuthor = document.getElementById('optShowAuthor');
   const optShowNo = document.getElementById('optShowNo');
-  const poolInfo = document.getElementById('poolInfo');
 
-  // List elements
+  // cooldown settings ui
+  const cooldownQuestions = document.getElementById('cooldownQuestions');
+  const btnSaveSettings   = document.getElementById('btnSaveSettings');
+  const btnResetProgress  = document.getElementById('btnResetProgress');
+
+  // ===== List elements =====
   const lQuery = document.getElementById('lQuery');
   const lMinNo = document.getElementById('lMinNo');
   const lMaxNo = document.getElementById('lMaxNo');
@@ -223,10 +257,9 @@
   }
 
   function normalizeForCompare(str) {
-    // 全角/半角のゆれを寄せる + 空白（半角/全角/改行等）を全て無視
     return (str ?? "")
       .normalize('NFKC')
-      .replace(/[\s\u3000]+/g, ""); // \u3000 = 全角スペース
+      .replace(/[\s\u3000]+/g, "");
   }
 
   // "1-10, 15, 20-25" -> Set<number>
@@ -235,7 +268,7 @@
     const raw = (expr ?? "").trim();
     if (!raw) return s;
 
-    const parts = raw.split(/[,\u3001]/).map(x => x.trim()).filter(Boolean); // , or 、区切り
+    const parts = raw.split(/[,\u3001]/).map(x => x.trim()).filter(Boolean);
     for (const p of parts) {
       const m = p.match(/^(\d+)\s*-\s*(\d+)$/);
       if (m) {
@@ -254,6 +287,38 @@
     return s;
   }
 
+  // ---------- Storage ----------
+  function loadJson(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return fallback;
+      const parsed = JSON.parse(raw);
+      return parsed ?? fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function saveJson(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+  }
+
+  function loadAllState() {
+    settings = { ...settings, ...loadJson(SETTINGS_KEY, {}) };
+    progress = loadJson(PROGRESS_KEY, {});
+    const st = loadJson(STATE_KEY, {});
+    if (typeof st.attempts === 'number' && Number.isFinite(st.attempts) && st.attempts >= 0) attempts = Math.floor(st.attempts);
+    if (typeof st.correct  === 'number' && Number.isFinite(st.correct)  && st.correct  >= 0) correct  = Math.floor(st.correct);
+
+    cooldownQuestions.value = String(settings.cooldownQuestions ?? 30);
+  }
+
+  function saveState() {
+    saveJson(SETTINGS_KEY, settings);
+    saveJson(PROGRESS_KEY, progress);
+    saveJson(STATE_KEY, { attempts, correct });
+  }
+
   // ---------- View switching ----------
   function setMode(mode) {
     const isQuiz = (mode !== 'list');
@@ -262,7 +327,6 @@
     tabQuiz.classList.toggle('active', isQuiz);
     tabList.classList.toggle('active', !isQuiz);
 
-    // hashを更新（ブックマーク用）
     const h = isQuiz ? '#quiz' : '#list';
     if (location.hash !== h) history.replaceState(null, '', location.pathname + location.search + h);
 
@@ -287,8 +351,8 @@
   }
 
   function updateScore() {
-    elScoreOk.textContent = String(scoreOk);
-    elScoreAll.textContent = String(scoreAll);
+    elScoreOk.textContent = String(correct);
+    elScoreAll.textContent = String(attempts);
   }
 
   function renderQuestionInfo(item) {
@@ -296,6 +360,30 @@
     if (optShowNo.checked) parts.push(`第${item.番号}番`);
     if (optShowAuthor.checked) parts.push(item.作者);
     elQInfo.textContent = parts.length ? parts.join(' / ') : '（表示情報なし）';
+  }
+
+  function getProg(no) {
+    const k = String(no);
+    const p = progress[k];
+    if (!p || typeof p !== 'object') {
+      progress[k] = { correctCount: 0, nextEligibleAttempt: 0 };
+      return progress[k];
+    }
+    p.correctCount = Number.isFinite(p.correctCount) ? p.correctCount : 0;
+    p.nextEligibleAttempt = Number.isFinite(p.nextEligibleAttempt) ? p.nextEligibleAttempt : 0;
+    return p;
+  }
+
+  function isEligible(item) {
+    const p = getProg(item.番号);
+    return attempts >= (p.nextEligibleAttempt || 0);
+  }
+
+  function updatePoolBadges() {
+    const eligibleCount = pool.filter(isEligible).length;
+    const cool = pool.length - eligibleCount;
+    poolInfo.textContent = `${pool.length}首`;
+    eligibleInfo.textContent = `出題可 ${eligibleCount}首 / クールダウン ${cool}首`;
   }
 
   function buildPoolFromQuizInputs() {
@@ -319,8 +407,23 @@
 
     pool = data.filter(x => allow.has(Number(x.番号)));
     if (pool.length === 0) throw new Error("出題プールが0件です（条件を見直してください）");
+    updatePoolBadges();
+  }
 
-    poolInfo.textContent = `${pool.length}首`;
+  function pickNextFromPool() {
+    const eligible = pool.filter(isEligible);
+    if (eligible.length > 0) {
+      return eligible[Math.floor(Math.random() * eligible.length)];
+    }
+    // 全部クールダウン中なら最も早く解禁される札を出す（止まらないため）
+    let best = null;
+    let bestNeed = Infinity;
+    for (const item of pool) {
+      const p = getProg(item.番号);
+      const need = Math.max(0, (p.nextEligibleAttempt || 0) - attempts);
+      if (need < bestNeed) { bestNeed = need; best = item; }
+    }
+    return best || pool[Math.floor(Math.random() * pool.length)];
   }
 
   function nextQuestion() {
@@ -328,10 +431,32 @@
     clearResult();
     elAnswer.value = '';
 
-    current = pool[Math.floor(Math.random() * pool.length)];
+    current = pickNextFromPool();
     elQDesc.textContent = current.説明;
     renderQuestionInfo(current);
+    updatePoolBadges();
+
+    const p = getProg(current.番号);
+    const need = Math.max(0, (p.nextEligibleAttempt || 0) - attempts);
+    if (need > 0) {
+      setResult('ng',
+        `⚠️ 出題プールが全てクールダウン中のため、最も早く解禁される札を出しました。` +
+        `<div class="muted" style="margin-top:6px;">この札の解禁まで：${need}問</div>`
+      );
+    }
+
     elAnswer.focus();
+  }
+
+  function applyCooldownOnCorrect(itemNo) {
+    const p = getProg(itemNo);
+    const cq = Math.max(0, Math.floor(Number(settings.cooldownQuestions) || 0));
+
+    p.correctCount += 1;
+    p.nextEligibleAttempt = attempts + cq;
+
+    progress[String(itemNo)] = p;
+    saveState();
   }
 
   function checkAnswer() {
@@ -341,19 +466,27 @@
     const a = normalizeForCompare(input);
     const b = normalizeForCompare(current.句);
 
-    scoreAll += 1;
+    attempts += 1;
 
     if (a && a === b) {
-      scoreOk += 1;
+      correct += 1;
+      applyCooldownOnCorrect(current.番号);
+
       setResult('ok',
-        `✅ 正解<br><div class="muted" style="margin-top:6px;">句：${escapeHtml(current.句)}<br>作者：${escapeHtml(current.作者)}</div>`
+        `✅ 正解` +
+        `<div class="muted" style="margin-top:6px;">句：${escapeHtml(current.句)}<br>作者：${escapeHtml(current.作者)}</div>` +
+        `<div class="muted" style="margin-top:6px;">この札はクールダウン：${settings.cooldownQuestions}問後まで再出題しません。</div>`
       );
     } else {
       setResult('ng',
-        `❌ 不正解<br><div class="muted" style="margin-top:6px;">正解の句：${escapeHtml(current.句)}<br>作者：${escapeHtml(current.作者)}</div>`
+        `❌ 不正解<br>` +
+        `<div class="muted" style="margin-top:6px;">正解の句：${escapeHtml(current.句)}<br>作者：${escapeHtml(current.作者)}</div>`
       );
     }
+
     updateScore();
+    updatePoolBadges();
+    saveState();
   }
 
   // ---------- List ----------
@@ -394,12 +527,15 @@
 
     lTbody.innerHTML = rows.map(item => {
       const n = Number(item.番号);
+      const p = getProg(n);
+      const eligible = isEligible(item);
+      const tag = eligible ? `<span class="pill">出題可</span>` : `<span class="pill">クールダウン</span>`;
       return `
         <tr>
           <td class="nowrap">${escapeHtml(n)}</td>
-          <td>${escapeHtml(item.作者)}</td>
+          <td>${escapeHtml(item.作者)}<div class="muted">正解:${escapeHtml(p.correctCount)}</div></td>
           <td>${escapeHtml(item.句)}</td>
-          <td>${escapeHtml(item.説明)}</td>
+          <td>${escapeHtml(item.説明)}<div class="muted">${tag}</div></td>
           <td class="small">
             <button class="btnLink" data-quiz-one="${escapeHtml(n)}">この1首で出題</button>
           </td>
@@ -407,11 +543,9 @@
       `;
     }).join("");
 
-    // 行ボタン
     lTbody.querySelectorAll('button[data-quiz-one]').forEach(btn => {
       btn.addEventListener('click', () => {
         const n = btn.getAttribute('data-quiz-one');
-        // クイズ側設定：番号指定を優先
         qSetText.value = String(n);
         qRangeMin.value = 1;
         qRangeMax.value = 100;
@@ -436,7 +570,6 @@
   }
 
   function setQuizPoolByNumbers(nums) {
-    // nums: number[]
     const sorted = Array.from(new Set(nums)).sort((a,b)=>a-b);
     qSetText.value = sorted.join(', ');
     qRangeMin.value = 1;
@@ -453,10 +586,11 @@
   document.getElementById('btnNext').addEventListener('click', nextQuestion);
   document.getElementById('btnCheck').addEventListener('click', checkAnswer);
 
+  // ★ Shift+Enter のみ回答。Enter単体は何もしない。
   elAnswer.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter') {
       e.preventDefault();
-      checkAnswer();
+      if (e.shiftKey) checkAnswer();
     }
   });
 
@@ -470,6 +604,25 @@
     } catch (err) {
       setResult('ng', `設定エラー: ${escapeHtml(err.message)}`);
     }
+  });
+
+  btnSaveSettings.addEventListener('click', () => {
+    const cq = Math.max(0, Math.floor(Number(cooldownQuestions.value) || 0));
+    settings.cooldownQuestions = cq;
+    saveState();
+    updatePoolBadges();
+    setResult('ok', `設定を保存しました（${cq}問後まで再出題しません）`);
+  });
+
+  btnResetProgress.addEventListener('click', () => {
+    progress = {};
+    attempts = 0;
+    correct = 0;
+    saveState();
+    updateScore();
+    updatePoolBadges();
+    clearResult();
+    setResult('ok', '履歴/成績をリセットしました。');
   });
 
   btnListClear.addEventListener('click', () => {
@@ -524,9 +677,16 @@
     if (!('句' in sample) || !('説明' in sample) || !('作者' in sample) || !('番号' in sample)) {
       throw new Error('data.json のキーが想定と違います（番号/句/作者/説明 が必要）');
     }
-    // 番号が1..100である前提（念のためソート）
     return json.slice().sort((a,b) => Number(a.番号) - Number(b.番号));
   }
+
+  function boot() {
+    loadAllState();
+    updateScore();
+    setMode(getModeFromHash());
+  }
+
+  boot();
 
   fetch('data.json', { cache: 'no-store' })
     .then(res => {
@@ -535,16 +695,11 @@
     })
     .then(json => {
       data = validateJsonShape(json);
-
       statusLine.textContent = `data.json 読み込みOK（${data.length}首）`;
 
-      // 初期モード
-      setMode(getModeFromHash());
-
-      // 初期出題プール（1..100）
       try {
         buildPoolFromQuizInputs();
-        poolInfo.textContent = `${pool.length}首`;
+        updatePoolBadges();
         if (getModeFromHash() === 'quiz') nextQuestion();
         else renderList();
       } catch (err) {
@@ -557,15 +712,10 @@
       viewQuiz.style.display = 'block';
       viewList.style.display = 'none';
       setResult('ng',
-        `data.json を読み込めませんでした: ${escapeHtml(err.message)}<br>
-         <div class="muted" style="margin-top:6px;">
-           ・index.html と data.json が同じフォルダにあるか<br>
-           ・<code>file://</code> 直開きの場合はローカルサーバで開いているか
-         </div>`
+        `data.json を読み込めませんでした: ${escapeHtml(err.message)}`
       );
     });
 
-  // hash変更（#quiz / #list）に追従
   window.addEventListener('hashchange', () => setMode(getModeFromHash()));
 })();
 </script>
