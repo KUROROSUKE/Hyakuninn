@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>百人一首クイズ（説明→句）</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans JP", sans-serif; line-height: 1.6; margin: 24px; }
+    .card { max-width: 820px; margin: 0 auto; padding: 16px; border: 1px solid #ddd; border-radius: 10px; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    input[type="text"] { flex: 1; min-width: 260px; padding: 10px; font-size: 16px; }
+    button { padding: 10px 14px; font-size: 14px; cursor: pointer; }
+    .meta { color: #555; font-size: 13px; }
+    .desc { font-size: 18px; padding: 10px 0; }
+    .result { margin-top: 10px; padding: 10px; border-radius: 8px; }
+    .ok { background: #eef9ee; border: 1px solid #bfe5bf; }
+    .ng { background: #fff3f3; border: 1px solid #f0bcbc; }
+    .muted { color: #666; font-size: 13px; }
+    details { margin-top: 8px; }
+    code { background: #f6f6f6; padding: 2px 6px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1 style="margin:0 0 8px;">百人一首クイズ</h1>
+    <div class="meta">
+      説明だけを表示します。句を入力してください（スペースは半角/全角/有無どれでもOK）。
+    </div>
+
+    <hr />
+
+    <div class="row" style="justify-content: space-between;">
+      <div class="meta">
+        <span id="qInfo">読み込み中...</span>
+      </div>
+      <div class="meta">
+        正解: <span id="scoreOk">0</span> / <span id="scoreAll">0</span>
+      </div>
+    </div>
+
+    <div class="desc" id="qDesc">-</div>
+
+    <div class="row">
+      <input id="answer" type="text" placeholder="ここに句を入力" autocomplete="off" />
+      <button id="btnCheck">答える</button>
+      <button id="btnNext">次の問題</button>
+    </div>
+
+    <div class="muted" style="margin-top:6px;">
+      例: <code>わが</code> と <code>わ が</code>（全角/半角スペース含む）を同一扱いで判定します。
+    </div>
+
+    <div id="result" class="result" style="display:none;"></div>
+
+    <details>
+      <summary>表示オプション</summary>
+      <div class="row" style="margin-top:10px;">
+        <label><input type="checkbox" id="optShowAuthor" /> 作者も表示</label>
+        <label><input type="checkbox" id="optShowNo" checked /> 番号も表示</label>
+      </div>
+    </details>
+
+    <details style="margin-top:10px;">
+      <summary>うまく動かないとき</summary>
+      <div class="muted" style="margin-top:8px;">
+        <p style="margin:0 0 8px;">
+          ブラウザによっては <code>file://</code> 直開きだと <code>data.json</code> を読めません。
+          その場合はこのフォルダで次を実行して、<code>http://localhost:8000/</code> を開いてください。
+        </p>
+        <pre style="margin:0; background:#f6f6f6; padding:10px; border-radius:8px; overflow:auto;"><code>python -m http.server 8000</code></pre>
+      </div>
+    </details>
+  </div>
+
+<script>
+(() => {
+  /** @type {{番号:number, 句:string, 作者:string, 説明:string}[]} */
+  let data = [];
+  let current = null;
+
+  let scoreOk = 0;
+  let scoreAll = 0;
+
+  const elQInfo = document.getElementById('qInfo');
+  const elQDesc = document.getElementById('qDesc');
+  const elAnswer = document.getElementById('answer');
+  const elResult = document.getElementById('result');
+  const elScoreOk = document.getElementById('scoreOk');
+  const elScoreAll = document.getElementById('scoreAll');
+
+  const optShowAuthor = document.getElementById('optShowAuthor');
+  const optShowNo = document.getElementById('optShowNo');
+
+  function normalizeForCompare(str) {
+    // NFKC: 全角英数/記号などのゆれを寄せる（句がひらがな中心でも害が少ない）
+    // スペース: 半角/全角/改行/タブ等をすべて無視
+    return (str ?? "")
+      .normalize('NFKC')
+      .replace(/[\s\u3000]+/g, ""); // \u3000 = 全角スペース
+  }
+
+  function setResult(kind, html) {
+    elResult.style.display = 'block';
+    elResult.className = 'result ' + (kind === 'ok' ? 'ok' : 'ng');
+    elResult.innerHTML = html;
+  }
+
+  function clearResult() {
+    elResult.style.display = 'none';
+    elResult.className = 'result';
+    elResult.innerHTML = '';
+  }
+
+  function updateScore() {
+    elScoreOk.textContent = String(scoreOk);
+    elScoreAll.textContent = String(scoreAll);
+  }
+
+  function renderQuestionInfo(item) {
+    const parts = [];
+    if (optShowNo.checked) parts.push(`第${item.番号}番`);
+    if (optShowAuthor.checked) parts.push(item.作者);
+    elQInfo.textContent = parts.length ? parts.join(' / ') : '（表示情報なし）';
+  }
+
+  function nextQuestion() {
+    if (!data.length) return;
+    clearResult();
+    elAnswer.value = '';
+
+    current = data[Math.floor(Math.random() * data.length)];
+    elQDesc.textContent = current.説明;
+    renderQuestionInfo(current);
+
+    elAnswer.focus();
+  }
+
+  function checkAnswer() {
+    if (!current) return;
+
+    const input = elAnswer.value;
+    const a = normalizeForCompare(input);
+    const b = normalizeForCompare(current.句);
+
+    scoreAll += 1;
+
+    if (a && a === b) {
+      scoreOk += 1;
+      setResult('ok',
+        `✅ 正解<br><div class="muted" style="margin-top:6px;">句：${escapeHtml(current.句)}<br>作者：${escapeHtml(current.作者)}</div>`
+      );
+    } else {
+      setResult('ng',
+        `❌ 不正解<br><div class="muted" style="margin-top:6px;">正解の句：${escapeHtml(current.句)}<br>作者：${escapeHtml(current.作者)}</div>`
+      );
+    }
+    updateScore();
+  }
+
+  function escapeHtml(s) {
+    return String(s ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
+  }
+
+  document.getElementById('btnNext').addEventListener('click', nextQuestion);
+  document.getElementById('btnCheck').addEventListener('click', checkAnswer);
+
+  // Enterで回答（Shift+Enterは無効化しない）
+  elAnswer.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      checkAnswer();
+    }
+  });
+
+  optShowAuthor.addEventListener('change', () => { if (current) renderQuestionInfo(current); });
+  optShowNo.addEventListener('change', () => { if (current) renderQuestionInfo(current); });
+
+  // data.json を読み込み
+  fetch('data.json', { cache: 'no-store' })
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then(json => {
+      if (!Array.isArray(json) || json.length === 0) throw new Error('data.json が配列ではない/空です');
+      // 期待キーの最低限チェック
+      const sample = json[0];
+      if (!('句' in sample) || !('説明' in sample) || !('作者' in sample) || !('番号' in sample)) {
+        throw new Error('data.json のキーが想定と違います（番号/句/作者/説明 が必要）');
+      }
+      data = json;
+      nextQuestion();
+    })
+    .catch(err => {
+      elQInfo.textContent = '読み込み失敗';
+      elQDesc.textContent = `data.json を読み込めませんでした: ${err.message}`;
+      setResult('ng',
+        `data.json の読み込みに失敗しました。<br>
+         <div class="muted" style="margin-top:6px;">
+           ・index.html と data.json が同じフォルダにあるか<br>
+           ・<code>file://</code> 直開きの場合はローカルサーバで開いているか（下の「うまく動かないとき」参照）
+         </div>`
+      );
+    });
+})();
+</script>
+</body>
+</html>
